@@ -240,6 +240,16 @@ createBackgroundSubtractorCNT(int minPixelStability = 15,
                               int maxPixelStability = 15*60,
                               bool isParallel = true);
 
+class CV_EXPORTS_W BackgroundSubtractorLSBP : public BackgroundSubtractor
+{
+public:
+    CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate=-1);
+
+    CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const;
+};
+
+CV_EXPORTS_W Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP();
+
 //! @}
 
 }
