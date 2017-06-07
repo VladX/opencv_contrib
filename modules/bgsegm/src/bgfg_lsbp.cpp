@@ -174,7 +174,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
     for (int i = 0; i < sz.height; ++i)
         for (int j = 0; j < sz.width; ++j) {
-            const int k = backgroundModel->findClosest(i, j, frame.at<Point3f>(i, j), 0.01);
+            const int k = backgroundModel->findClosest(i, j, frame.at<Point3f>(i, j), 0.01f);
             if (k == -1) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
