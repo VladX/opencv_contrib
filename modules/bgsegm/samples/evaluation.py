@@ -56,22 +56,21 @@ def evaluate_algorithm(gt, frames, algo):
             fp = ((answer == 255) & (gt_answer == 0)).sum()
             fn = ((answer == 0) & (gt_answer == 255)).sum()
 
-            precision = 0.0 if tp + fp == 0 else float(tp) / (tp + fp)
-            recall = 0.0 if tp + fn == 0 else float(tp) / (tp + fn)
-            f1 = 0.0 if precision + recall == 0.0 else 2 * precision * recall / (precision + recall)
-            accuracy = float(tp + tn) / (tp + tn + fp + fn)
-
-            average_precision.append(precision)
-            average_recall.append(recall)
-            average_f1.append(f1)
-            average_accuracy.append(accuracy)
+            if tp + fp > 0:
+                average_precision.append(float(tp) / (tp + fp))
+            if tp + fn > 0:
+                average_recall.append(float(tp) / (tp + fn))
+            if tp + fn + fp > 0:
+                average_f1.append(2.0 * tp / (2.0 * tp + fn + fp))
+            average_accuracy.append(float(tp + tn) / (tp + tn + fp + fn))
 
     return average_duration, np.mean(average_precision), np.mean(average_recall), np.mean(average_f1), np.mean(average_accuracy)
 
 
-def evaluate_on_sequence(seq):
+def evaluate_on_sequence(seq, summary):
     gt, frames = load_sequence(seq)
-    print('=== %s:%s ===' % (os.path.basename(os.path.dirname(seq)), os.path.basename(seq)))
+    category, video_name = os.path.basename(os.path.dirname(seq)), os.path.basename(seq)
+    print('=== %s:%s ===' % (category, video_name))
 
     for algo, algo_name in ALGORITHMS_TO_EVALUATE:
         print('Algorithm name: %s' % algo_name)
@@ -83,17 +82,37 @@ def evaluate_on_sequence(seq):
         print('Average sec. per step: %.4f' % sec_per_step)
         print('')
 
+        if category not in summary:
+            summary[category] = {}
+        if algo_name not in summary[category]:
+            summary[category][algo_name] = []
+        summary[category][algo_name].append((precision, recall, f1, accuracy))
+
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate all background subtractors using Change Detection 2014 dataset')
     parser.add_argument('--dataset_path', help='Path to the directory with dataset. It may contain multiple inner directories. It will be scanned recursively.', required=True)
+    parser.add_argument('--algorithm', help='Test particular algorithm instead of all.')
 
     args = parser.parse_args()
     dataset_dirs = find_relevant_dirs(args.dataset_path)
     assert len(dataset_dirs) > 0, ("Passed directory must contain at least one sequence from the Change Detection dataset. There is no relevant directories in %s. Check that this directory is correct." % (args.dataset_path))
+    if args.algorithm is not None:
+        global ALGORITHMS_TO_EVALUATE
+        ALGORITHMS_TO_EVALUATE = filter(lambda a: a[1].lower() == args.algorithm.lower(), ALGORITHMS_TO_EVALUATE)
+    summary = {}
 
     for seq in dataset_dirs:
-        evaluate_on_sequence(seq)
+        evaluate_on_sequence(seq, summary)
+
+    for category in summary:
+        for algo_name in summary[category]:
+            summary[category][algo_name] = np.mean(summary[category][algo_name], axis=0)
+
+    for category in summary:
+        print('=== SUMMARY for %s (Precision, Recall, F1, Accuracy) ===' % category)
+        for algo_name in summary[category]:
+            print('%05s: %.3f %.3f %.3f %.3f' % ((algo_name,) + tuple(summary[category][algo_name])))
 
 
 if __name__ == '__main__':
