@@ -197,9 +197,9 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
 void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundImage) const
 {
-    /*_backgroundImage.create(prevFrame.size(), CV_8U);
+    _backgroundImage.create(backgroundModel->getSize(), CV_8U);
     Mat backgroundImage = _backgroundImage.getMat();
-    backgroundImage = Scalar(0);*/
+    backgroundImage = Scalar(0);
 }
 
 Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP()
