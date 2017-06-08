@@ -58,8 +58,9 @@ class BackgroundSample {
 public:
     Point3f color;
     uint64_t time;
+    uint64_t hits;
 
-    BackgroundSample(Point3f c = Point3f(), uint64_t t = 0) : color(c), time(t) {}
+    BackgroundSample(Point3f c = Point3f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
 };
 
 class BackgroundModel {
@@ -124,16 +125,20 @@ private:
     Ptr<BackgroundModel> backgroundModel;
     uint64_t currentTime;
     const int nSamples;
+    const float replaceRate;
+    const float propagationRate;
+    const uint64_t hitsThreshold;
+    RNG rng;
 
 public:
-    BackgroundSubtractorLSBPImpl(int numberOfSamples = 20);
+    BackgroundSubtractorLSBPImpl(int nSamples = 20, float replaceRate = 0.0075f, float propagationRate = 0.03f, uint64_t hitsThreshold = 32);
 
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate = -1);
 
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const;
 };
 
-BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int numberOfSamples) : currentTime(0), nSamples(numberOfSamples)
+BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples, float _replaceRate, float _propagationRate, uint64_t _hitsThreshold) : currentTime(0), nSamples(_nSamples), replaceRate(_replaceRate), propagationRate(_propagationRate), hitsThreshold(_hitsThreshold)
 {}
 
 void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask, double learningRate)
@@ -141,7 +146,6 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     const Size sz = _image.size();
     _fgmask.create(sz, CV_8U);
     Mat fgMask = _fgmask.getMat();
-    //fgMask = Scalar(0);
 
     Mat frame = _image.getMat();
 
@@ -178,7 +182,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
             if (k == -1) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
-                if (rand() % 20 == 0) {
+                if (rng.uniform(0.0f, 1.0f) < replaceRate) {
                     backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), currentTime));
                 }
             }
@@ -187,6 +191,19 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
                 sample.color *= 1.0 - learningRate;
                 sample.color += learningRate * frame.at<Point3f>(i, j);
                 sample.time = currentTime;
+                ++sample.hits;
+
+                // Propagation to neighbors
+                if (sample.hits > hitsThreshold && rng.uniform(0.0f, 1.0f) < propagationRate) {
+                    if (i + 1 < sz.height)
+                        backgroundModel->replaceOldest(i + 1, j, sample);
+                    if (j + 1 < sz.width)
+                        backgroundModel->replaceOldest(i, j + 1, sample);
+                    if (i > 0)
+                        backgroundModel->replaceOldest(i - 1, j, sample);
+                    if (j > 0)
+                        backgroundModel->replaceOldest(i, j - 1, sample);
+                }
 
                 fgMask.at<uint8_t>(i, j) = 0;
             }
