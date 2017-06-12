@@ -248,7 +248,7 @@ public:
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const = 0;
 };
 
-CV_EXPORTS_W Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP();
+CV_EXPORTS_W Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples = 20, float replaceRate = 0.003f, float propagationRate = 0.01f, uint64_t hitsThreshold = 32, float alpha = 0.5, float beta = 0.5);
 
 //! @}
 

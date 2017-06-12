@@ -8,11 +8,10 @@
 //
 //
 //                          License Agreement
-//                       (3-clause BSD License)
-//                     For BackgroundSubtractorCNT
-//               (Background Subtraction based on Counting)
+//                For Open Source Computer Vision Library
 //
-// Copyright (C) 2016, Sagi Zeevi (www.theimpossiblecode.com), all rights reserved.
+// Copyright (C) 2000, Intel Corporation, all rights reserved.
+// Copyright (C) 2013, OpenCV Foundation, all rights reserved.
 // Third party copyrights are property of their respective owners.
 //
 // Redistribution and use in source and binary forms, with or without modification,
@@ -49,18 +48,104 @@ namespace cv
 namespace bgsegm
 {
 
-inline float L2sqdist(Point3f a, Point3f b) {
-    a -= b;
+inline float L2sqdist(const Vec4f& a) {
     return a.dot(a);
+}
+
+inline float det3x3(float a11, float a12, float a13, float a22, float a23, float a33) {
+    return a11 * (a22 * a33 - a23 * a23) + a12 * (2 * a13 * a23 - a33 * a12) - a13 * a13 * a22;
+}
+
+inline float localSVD(float a11, float a12, float a13, float a21, float a22, float a23, float a31, float a32, float a33) {
+    float b11 = a11 * a11 + a12 * a12 + a13 * a13;
+    float b12 = a11 * a21 + a12 * a22 + a13 * a23;
+    float b13 = a11 * a31 + a12 * a32 + a13 * a33;
+    float b22 = a21 * a21 + a22 * a22 + a23 * a23;
+    float b23 = a21 * a31 + a22 * a32 + a23 * a33;
+    float b33 = a31 * a31 + a32 * a32 + a33 * a33;
+    const float q = (b11 + b22 + b33) / 3;
+
+    b11 -= q;
+    b22 -= q;
+    b33 -= q;
+
+    float p = std::sqrt((b11 * b11 + b22 * b22 + b33 * b33 + 2 * (b12 * b12 + b13 * b13 + b23 * b23)) / 6);
+
+    if (p == 0)
+        return 0;
+
+    const float pi = 1 / p;
+    const float r = det3x3(pi * b11, pi * b12, pi * b13, pi * b22, pi * b23, pi * b33) / 2;
+    float phi;
+
+    if (r <= -1)
+        phi = CV_PI / 3;
+    else if (r >= 1)
+        phi = 0;
+    else
+        phi = std::acos(r) / 3;
+
+    p *= 2;
+    const float e1 = q + p * std::cos(phi);
+    float e2, e3;
+
+    if (e1 < 3 * q) {
+        e3 = std::max(q + p * std::cos(phi + float(2 * CV_PI / 3)), 0.0f);
+        e2 = std::max(3 * q - e1 - e3, 0.0f);
+    }
+    else {
+        e2 = 0;
+        e3 = 0;
+    }
+
+    return std::sqrt(e2 / e1) + std::sqrt(e3 / e1);
+}
+
+inline void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
+    Mat frameGray;
+    const Size sz = frame.size();
+
+    cvtColor(frame, frameGray, COLOR_BGR2GRAY);
+
+    for (int i = 1; i < sz.height - 1; ++i)
+        for (int j = 1; j < sz.width - 1; ++j) {
+            localSVDValues.at<float>(i, j) = localSVD(
+                frameGray.at<float>(i - 1, j - 1), frameGray.at<float>(i - 1, j), frameGray.at<float>(i - 1, j + 1),
+                frameGray.at<float>(i, j - 1), frameGray.at<float>(i, j), frameGray.at<float>(i, j + 1),
+                frameGray.at<float>(i + 1, j - 1), frameGray.at<float>(i + 1, j), frameGray.at<float>(i + 1, j + 1));
+        }
+
+    for (int i = 1; i < sz.height - 1; ++i) {
+        localSVDValues.at<float>(i, 0) = localSVD(
+            frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 1),
+            frameGray.at<float>(i, 0), frameGray.at<float>(i, 0), frameGray.at<float>(i, 1),
+            frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 1));
+
+        localSVDValues.at<float>(i, sz.width - 1) = localSVD(
+            frameGray.at<float>(i - 1, sz.width - 2), frameGray.at<float>(i - 1, sz.width - 1), frameGray.at<float>(i - 1, sz.width - 1),
+            frameGray.at<float>(i, sz.width - 2), frameGray.at<float>(i, sz.width - 1), frameGray.at<float>(i, sz.width - 1),
+            frameGray.at<float>(i + 1, sz.width - 2), frameGray.at<float>(i + 1, sz.width - 1), frameGray.at<float>(i + 1, sz.width - 1));
+    }
+
+    for (int j = 1; j < sz.width - 1; ++j) {
+        localSVDValues.at<float>(0, j) = localSVD(
+            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
+            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
+            frameGray.at<float>(1, j - 1), frameGray.at<float>(1, j), frameGray.at<float>(1, j + 1));
+        localSVDValues.at<float>(sz.height - 1, j) = localSVD(
+            frameGray.at<float>(sz.height - 2, j - 1), frameGray.at<float>(sz.height - 2, j), frameGray.at<float>(sz.height - 2, j + 1),
+            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1),
+            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1));
+    }
 }
 
 class BackgroundSample {
 public:
-    Point3f color;
+    Vec4f color;
     uint64_t time;
     uint64_t hits;
 
-    BackgroundSample(Point3f c = Point3f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
+    BackgroundSample(Vec4f c = Vec4f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
 };
 
 class BackgroundModel {
@@ -95,18 +180,19 @@ public:
         return size;
     }
 
-    int findClosest(int i, int j, Point3f color, float threshold) const {
+    float findClosest(int i, int j, const Vec4f& color, int& indOut) const {
         const int end = i * stride + (j + 1) * nSamples;
         int minInd = i * stride + j * nSamples;
-        float minDist = L2sqdist(color, samples[minInd].color);
+        float minDist = L2sqdist(color - samples[minInd].color);
         for (int k = minInd + 1; k < end; ++k) {
-            const float dist = L2sqdist(color, samples[k].color);
+            const float dist = L2sqdist(color - samples[k].color);
             if (dist < minDist) {
                 minInd = k;
                 minDist = dist;
             }
         }
-        return minDist < threshold ? minInd : -1;
+        indOut = minInd;
+        return minDist;
     }
 
     void replaceOldest(int i, int j, const BackgroundSample& sample) {
@@ -120,6 +206,13 @@ public:
     }
 };
 
+inline void addChannel(Mat& img, Mat& ch) {
+    std::vector<Mat> matChannels;
+    cv::split(img, matChannels);
+    matChannels.push_back(ch);
+    cv::merge(matChannels, img);
+}
+
 class BackgroundSubtractorLSBPImpl : public BackgroundSubtractorLSBP {
 private:
     Ptr<BackgroundModel> backgroundModel;
@@ -128,17 +221,19 @@ private:
     const float replaceRate;
     const float propagationRate;
     const uint64_t hitsThreshold;
+    const float alpha;
+    const float beta;
     RNG rng;
 
 public:
-    BackgroundSubtractorLSBPImpl(int nSamples = 20, float replaceRate = 0.0075f, float propagationRate = 0.03f, uint64_t hitsThreshold = 32);
+    BackgroundSubtractorLSBPImpl(int nSamples, float replaceRate, float propagationRate, uint64_t hitsThreshold, float alpha, float beta);
 
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate = -1);
 
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const;
 };
 
-BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples, float _replaceRate, float _propagationRate, uint64_t _hitsThreshold) : currentTime(0), nSamples(_nSamples), replaceRate(_replaceRate), propagationRate(_propagationRate), hitsThreshold(_hitsThreshold)
+BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples, float _replaceRate, float _propagationRate, uint64_t _hitsThreshold, float _alpha, float _beta) : currentTime(0), nSamples(_nSamples), replaceRate(_replaceRate), propagationRate(_propagationRate), hitsThreshold(_hitsThreshold), alpha(_alpha), beta(_beta)
 {}
 
 void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask, double learningRate)
@@ -160,12 +255,19 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
         frame /= 255;
     }
 
+    Mat localSVDValues(sz, CV_32F, 0.0f);
+    //calcLocalSVDValues(localSVDValues, frame);
+    //localSVDValues *= 2;
+    addChannel(frame, localSVDValues);
+
+    CV_Assert(frame.channels() == 4);
+
     if (backgroundModel.empty()) {
         backgroundModel = makePtr<BackgroundModel>(sz, nSamples);
 
         for (int i = 0; i < sz.height; ++i)
             for (int j = 0; j < sz.width; ++j) {
-                BackgroundSample sample(frame.at<Point3f>(i, j));
+                BackgroundSample sample(frame.at<Vec4f>(i, j));
                 for (int k = 0; k < nSamples; ++k)
                     (* backgroundModel)(i, j, k) = sample;
             }
@@ -176,20 +278,32 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     if (learningRate > 1 || learningRate < 0)
         learningRate = 0.1;
 
+    const float movingAvgLR = learningRate / 2;
+    const float distEPS = 0.0001f;
+    Mat distMovingAvg(sz, CV_32F, 0.005f);
+    Mat distMovingVar(sz, CV_32F, 0.0f);
+
     for (int i = 0; i < sz.height; ++i)
         for (int j = 0; j < sz.width; ++j) {
-            const int k = backgroundModel->findClosest(i, j, frame.at<Point3f>(i, j), 0.01f);
-            if (k == -1) {
+            int k;
+            const float minDist = backgroundModel->findClosest(i, j, frame.at<Vec4f>(i, j), k);
+
+            distMovingAvg.at<float>(i, j) *= 1 - movingAvgLR;
+            distMovingAvg.at<float>(i, j) += movingAvgLR * minDist;
+
+            distMovingVar.at<float>(i, j) *= 1 - learningRate;
+            distMovingVar.at<float>(i, j) += learningRate * std::abs(distMovingAvg.at<float>(i, j) - minDist);
+
+            if (minDist > alpha * distMovingAvg.at<float>(i, j) + beta * distMovingVar.at<float>(i, j) + distEPS) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
-                if (rng.uniform(0.0f, 1.0f) < replaceRate) {
-                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), currentTime));
-                }
+                if (rng.uniform(0.0f, 1.0f) < replaceRate)
+                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Vec4f>(i, j), currentTime));
             }
             else {
                 BackgroundSample& sample = (* backgroundModel)(k);
-                sample.color *= 1.0 - learningRate;
-                sample.color += learningRate * frame.at<Point3f>(i, j);
+                sample.color *= 1 - learningRate;
+                sample.color += learningRate * frame.at<Vec4f>(i, j);
                 sample.time = currentTime;
                 ++sample.hits;
 
@@ -210,6 +324,9 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
         }
 
     ++currentTime;
+
+    GaussianBlur(fgMask, fgMask, Size(5, 5), 0);
+    fgMask = fgMask > 127;
 }
 
 void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundImage) const
@@ -219,9 +336,9 @@ void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundIma
     backgroundImage = Scalar(0);
 }
 
-Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP()
+Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples, float replaceRate, float propagationRate, uint64_t hitsThreshold, float alpha, float beta)
 {
-    return makePtr<BackgroundSubtractorLSBPImpl>();
+    return makePtr<BackgroundSubtractorLSBPImpl>(nSamples, replaceRate, propagationRate, hitsThreshold, alpha, beta);
 }
 
 }
