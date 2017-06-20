@@ -47,6 +47,8 @@ namespace cv
 {
 namespace bgsegm
 {
+namespace
+{
 
 inline float L2sqdist(const Vec4f& a) {
     return a.dot(a);
@@ -101,7 +103,7 @@ inline float localSVD(float a11, float a12, float a13, float a21, float a22, flo
     return std::sqrt(e2 / e1) + std::sqrt(e3 / e1);
 }
 
-inline void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
+void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
     Mat frameGray;
     const Size sz = frame.size();
 
@@ -137,6 +139,31 @@ inline void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
             frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1),
             frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1));
     }
+}
+
+void addChannel(Mat& img, Mat& ch) {
+    std::vector<Mat> matChannels;
+    cv::split(img, matChannels);
+    matChannels.push_back(ch);
+    cv::merge(matChannels, img);
+}
+
+void removeNoise(Mat& fgMask, const Mat& compMask, const size_t threshold, const uint8_t filler) {
+    const Size sz = fgMask.size();
+    Mat labels;
+    const int nComponents = connectedComponents(compMask, labels, 8, CV_32S);
+    std::vector<size_t> compArea(nComponents, 0);
+
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j)
+            ++compArea[labels.at<int>(i, j)];
+
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j)
+            if (compArea[labels.at<int>(i, j)] < threshold)
+                fgMask.at<uint8_t>(i, j) = filler;
+}
+
 }
 
 class BackgroundSample {
@@ -206,13 +233,6 @@ public:
     }
 };
 
-inline void addChannel(Mat& img, Mat& ch) {
-    std::vector<Mat> matChannels;
-    cv::split(img, matChannels);
-    matChannels.push_back(ch);
-    cv::merge(matChannels, img);
-}
-
 class BackgroundSubtractorLSBPImpl : public BackgroundSubtractorLSBP {
 private:
     Ptr<BackgroundModel> backgroundModel;
@@ -223,18 +243,70 @@ private:
     const uint64_t hitsThreshold;
     const float alpha;
     const float beta;
+    const float feedbackInc;
+    const float feedbackDec;
+    const float noiseRemovalThresholdFacBG;
+    const float noiseRemovalThresholdFacFG;
+    Mat distMovingAvg;
+    Mat distThreshold;
     RNG rng;
 
+    void postprocessing(Mat& fgMask);
+
 public:
-    BackgroundSubtractorLSBPImpl(int nSamples, float replaceRate, float propagationRate, uint64_t hitsThreshold, float alpha, float beta);
+    BackgroundSubtractorLSBPImpl(int nSamples,
+                                 float replaceRate,
+                                 float propagationRate,
+                                 uint64_t hitsThreshold,
+                                 float alpha,
+                                 float beta,
+                                 float feedbackInc,
+                                 float feedbackDec,
+                                 float noiseRemovalThresholdFacBG,
+                                 float noiseRemovalThresholdFacFG);
 
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate = -1);
 
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const;
 };
 
-BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples, float _replaceRate, float _propagationRate, uint64_t _hitsThreshold, float _alpha, float _beta) : currentTime(0), nSamples(_nSamples), replaceRate(_replaceRate), propagationRate(_propagationRate), hitsThreshold(_hitsThreshold), alpha(_alpha), beta(_beta)
-{}
+BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples,
+                                                           float _replaceRate,
+                                                           float _propagationRate,
+                                                           uint64_t _hitsThreshold,
+                                                           float _alpha,
+                                                           float _beta,
+                                                           float _feedbackInc,
+                                                           float _feedbackDec,
+                                                           float _noiseRemovalThresholdFacBG,
+                                                           float _noiseRemovalThresholdFacFG)
+: currentTime(0),
+  nSamples(_nSamples),
+  replaceRate(_replaceRate),
+  propagationRate(_propagationRate),
+  hitsThreshold(_hitsThreshold),
+  alpha(_alpha),
+  beta(_beta),
+  feedbackInc(_feedbackInc),
+  feedbackDec(_feedbackDec),
+  noiseRemovalThresholdFacBG(_noiseRemovalThresholdFacBG),
+  noiseRemovalThresholdFacFG(_noiseRemovalThresholdFacFG) {
+    CV_Assert(nSamples > 1 && nSamples < 1024);
+    CV_Assert(replaceRate >= 0 && replaceRate <= 1);
+    CV_Assert(propagationRate >= 0 && propagationRate <= 1);
+    CV_Assert(feedbackInc > 0 && feedbackDec > 0);
+    CV_Assert(noiseRemovalThresholdFacBG >= 0 && noiseRemovalThresholdFacBG < 0.5);
+    CV_Assert(noiseRemovalThresholdFacFG >= 0 && noiseRemovalThresholdFacFG < 0.5);
+}
+
+void BackgroundSubtractorLSBPImpl::postprocessing(Mat& fgMask) {
+    removeNoise(fgMask, fgMask, size_t(noiseRemovalThresholdFacBG * fgMask.size().area()), 0);
+    Mat invFgMask = 255 - fgMask;
+    removeNoise(fgMask, invFgMask, size_t(noiseRemovalThresholdFacFG * fgMask.size().area()), 255);
+
+    GaussianBlur(fgMask, fgMask, Size(5, 5), 0);
+    fgMask = fgMask > 127;
+}
 
 void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask, double learningRate)
 {
@@ -264,6 +336,8 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
     if (backgroundModel.empty()) {
         backgroundModel = makePtr<BackgroundModel>(sz, nSamples);
+        distMovingAvg = Mat(sz, CV_32F, 0.005f);
+        distThreshold = Mat(sz, CV_32F, 0.005f);
 
         for (int i = 0; i < sz.height; ++i)
             for (int j = 0; j < sz.width; ++j) {
@@ -278,23 +352,22 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     if (learningRate > 1 || learningRate < 0)
         learningRate = 0.1;
 
-    const float movingAvgLR = learningRate / 2;
-    const float distEPS = 0.0001f;
-    Mat distMovingAvg(sz, CV_32F, 0.005f);
-    Mat distMovingVar(sz, CV_32F, 0.0f);
-
     for (int i = 0; i < sz.height; ++i)
         for (int j = 0; j < sz.width; ++j) {
             int k;
             const float minDist = backgroundModel->findClosest(i, j, frame.at<Vec4f>(i, j), k);
 
-            distMovingAvg.at<float>(i, j) *= 1 - movingAvgLR;
-            distMovingAvg.at<float>(i, j) += movingAvgLR * minDist;
+            distMovingAvg.at<float>(i, j) *= 1 - learningRate;
+            distMovingAvg.at<float>(i, j) += learningRate * minDist;
 
-            distMovingVar.at<float>(i, j) *= 1 - learningRate;
-            distMovingVar.at<float>(i, j) += learningRate * std::abs(distMovingAvg.at<float>(i, j) - minDist);
+            const float threshold = alpha * distMovingAvg.at<float>(i, j) + beta;
 
-            if (minDist > alpha * distMovingAvg.at<float>(i, j) + beta * distMovingVar.at<float>(i, j) + distEPS) {
+            if (distThreshold.at<float>(i, j) < threshold)
+                distThreshold.at<float>(i, j) += feedbackInc;
+            else
+                distThreshold.at<float>(i, j) -= feedbackDec;
+
+            if (minDist > distThreshold.at<float>(i, j)) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
                 if (rng.uniform(0.0f, 1.0f) < replaceRate)
@@ -325,8 +398,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
     ++currentTime;
 
-    GaussianBlur(fgMask, fgMask, Size(5, 5), 0);
-    fgMask = fgMask > 127;
+    this->postprocessing(fgMask);
 }
 
 void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundImage) const
@@ -336,9 +408,26 @@ void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundIma
     backgroundImage = Scalar(0);
 }
 
-Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples, float replaceRate, float propagationRate, uint64_t hitsThreshold, float alpha, float beta)
-{
-    return makePtr<BackgroundSubtractorLSBPImpl>(nSamples, replaceRate, propagationRate, hitsThreshold, alpha, beta);
+Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
+                                                             float replaceRate,
+                                                             float propagationRate,
+                                                             uint64_t hitsThreshold,
+                                                             float alpha,
+                                                             float beta,
+                                                             float feedbackInc,
+                                                             float feedbackDec,
+                                                             float noiseRemovalThresholdFacBG,
+                                                             float noiseRemovalThresholdFacFG) {
+    return makePtr<BackgroundSubtractorLSBPImpl>(nSamples,
+                                                 replaceRate,
+                                                 propagationRate,
+                                                 hitsThreshold,
+                                                 alpha,
+                                                 beta,
+                                                 feedbackInc,
+                                                 feedbackDec,
+                                                 noiseRemovalThresholdFacBG,
+                                                 noiseRemovalThresholdFacFG);
 }
 
 }
