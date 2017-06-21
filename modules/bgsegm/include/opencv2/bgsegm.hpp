@@ -248,7 +248,7 @@ public:
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const = 0;
 };
 
-CV_EXPORTS_W Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples = 20, float replaceRate = 0.003f, float propagationRate = 0.01f, uint64_t hitsThreshold = 32, float alpha = 0.01f, float beta = 0.0022f, float feedbackInc = 0.0002f, float feedbackDec = 0.0005f, float noiseRemovalThresholdFacBG = 0.0004f, float noiseRemovalThresholdFacFG = 0.0008f);
+CV_EXPORTS_W Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples = 20, float replaceRate = 0.003f, float propagationRate = 0.01f, uint64_t hitsThreshold = 32, float alpha = 0.01f, float beta = 0.0022f, float feedbackInc = 0.0002f, float feedbackDec = 0.0005f, float noiseRemovalThresholdFacBG = 0.0004f, float noiseRemovalThresholdFacFG = 0.0008f, bool useDescriptors = false);
 
 //! @}
 

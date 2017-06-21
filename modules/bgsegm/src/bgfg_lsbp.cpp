@@ -141,13 +141,6 @@ void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
     }
 }
 
-void addChannel(Mat& img, Mat& ch) {
-    std::vector<Mat> matChannels;
-    cv::split(img, matChannels);
-    matChannels.push_back(ch);
-    cv::merge(matChannels, img);
-}
-
 void removeNoise(Mat& fgMask, const Mat& compMask, const size_t threshold, const uint8_t filler) {
     const Size sz = fgMask.size();
     Mat labels;
@@ -268,6 +261,7 @@ private:
     const float feedbackDec;
     const float noiseRemovalThresholdFacBG;
     const float noiseRemovalThresholdFacFG;
+    const bool useDescriptors;
     Mat distMovingAvg;
     Mat distThreshold;
     RNG rng;
@@ -284,7 +278,8 @@ public:
                                  float feedbackInc,
                                  float feedbackDec,
                                  float noiseRemovalThresholdFacBG,
-                                 float noiseRemovalThresholdFacFG);
+                                 float noiseRemovalThresholdFacFG,
+                                 bool useDescriptors);
 
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate = -1);
 
@@ -300,7 +295,8 @@ BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples,
                                                            float _feedbackInc,
                                                            float _feedbackDec,
                                                            float _noiseRemovalThresholdFacBG,
-                                                           float _noiseRemovalThresholdFacFG)
+                                                           float _noiseRemovalThresholdFacFG,
+                                                           bool _useDescriptors)
 : currentTime(0),
   nSamples(_nSamples),
   replaceRate(_replaceRate),
@@ -311,7 +307,8 @@ BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples,
   feedbackInc(_feedbackInc),
   feedbackDec(_feedbackDec),
   noiseRemovalThresholdFacBG(_noiseRemovalThresholdFacBG),
-  noiseRemovalThresholdFacFG(_noiseRemovalThresholdFacFG) {
+  noiseRemovalThresholdFacFG(_noiseRemovalThresholdFacFG),
+  useDescriptors(_useDescriptors) {
     CV_Assert(nSamples > 1 && nSamples < 1024);
     CV_Assert(replaceRate >= 0 && replaceRate <= 1);
     CV_Assert(propagationRate >= 0 && propagationRate <= 1);
@@ -349,9 +346,9 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     }
 
     Mat localSVDValues(sz, CV_32F, 0.0f);
-    //calcLocalSVDValues(localSVDValues, frame);
-    //localSVDValues *= 2;
-    //addChannel(frame, localSVDValues);
+
+    if (useDescriptors)
+        calcLocalSVDValues(localSVDValues, frame);
 
     CV_Assert(frame.channels() == 3);
 
@@ -441,7 +438,8 @@ Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
                                                              float feedbackInc,
                                                              float feedbackDec,
                                                              float noiseRemovalThresholdFacBG,
-                                                             float noiseRemovalThresholdFacFG) {
+                                                             float noiseRemovalThresholdFacFG,
+                                                             bool useDescriptors) {
     return makePtr<BackgroundSubtractorLSBPImpl>(nSamples,
                                                  replaceRate,
                                                  propagationRate,
@@ -451,7 +449,8 @@ Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
                                                  feedbackInc,
                                                  feedbackDec,
                                                  noiseRemovalThresholdFacBG,
-                                                 noiseRemovalThresholdFacFG);
+                                                 noiseRemovalThresholdFacFG,
+                                                 useDescriptors);
 }
 
 }
