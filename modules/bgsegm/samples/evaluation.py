@@ -29,9 +29,7 @@ def load_sequence(root):
     gt_dir, frames_dir = os.path.join(root, 'groundtruth'), os.path.join(root, 'input')
     gt = sorted(glob.glob(os.path.join(gt_dir, '*.png')))
     f = sorted(glob.glob(os.path.join(frames_dir, '*.jpg')))
-    gt = np.uint8(map(lambda x: cv2.imread(x, cv2.IMREAD_GRAYSCALE), gt))
-    f = np.uint8(map(lambda x: cv2.imread(x, cv2.IMREAD_COLOR), f))
-    assert(gt.shape[0] == f.shape[0])
+    assert(len(gt) == len(f))
     return gt, f
 
 
@@ -40,16 +38,18 @@ def evaluate_algorithm(gt, frames, algo):
     mask = []
     t_start = time.time()
 
-    for i in range(gt.shape[0]):
-        mask.append(bgs.apply(frames[i]))
+    for i in range(len(gt)):
+        frame = np.uint8(cv2.imread(frames[i], cv2.IMREAD_COLOR))
+        mask.append(bgs.apply(frame))
 
-    average_duration = (time.time() - t_start) / gt.shape[0]
+    average_duration = (time.time() - t_start) / len(gt)
     average_precision, average_recall, average_f1, average_accuracy = [], [], [], []
 
-    for i in range(gt.shape[0]):
-        roi = ((gt[i] == 255) | (gt[i] == 0))
+    for i in range(len(gt)):
+        gt_mask = np.uint8(cv2.imread(gt[i], cv2.IMREAD_GRAYSCALE))
+        roi = ((gt_mask == 255) | (gt_mask == 0))
         if roi.sum() > 0:
-            gt_answer, answer = gt[i][roi], mask[i][roi]
+            gt_answer, answer = gt_mask[roi], mask[i][roi]
 
             tp = ((answer == 255) & (gt_answer == 255)).sum()
             tn = ((answer == 0) & (gt_answer == 0)).sum()
