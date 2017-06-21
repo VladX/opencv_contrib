@@ -50,7 +50,7 @@ namespace bgsegm
 namespace
 {
 
-inline float L2sqdist(const Vec4f& a) {
+inline float L2sqdist(const Point3f& a) {
     return a.dot(a);
 }
 
@@ -168,11 +168,11 @@ void removeNoise(Mat& fgMask, const Mat& compMask, const size_t threshold, const
 
 class BackgroundSample {
 public:
-    Vec4f color;
+    Point3f color;
     uint64_t time;
     uint64_t hits;
 
-    BackgroundSample(Vec4f c = Vec4f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
+    BackgroundSample(Point3f c = Point3f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
 };
 
 class BackgroundModel {
@@ -207,7 +207,7 @@ public:
         return size;
     }
 
-    float findClosest(int i, int j, const Vec4f& color, int& indOut) const {
+    float findClosest(int i, int j, const Point3f& color, int& indOut) const {
         const int end = i * stride + (j + 1) * nSamples;
         int minInd = i * stride + j * nSamples;
         float minDist = L2sqdist(color - samples[minInd].color);
@@ -230,6 +230,27 @@ public:
                 minInd = k;
         }
         samples[minInd] = sample;
+    }
+
+    Point3f getMean(int i, int j, uint64_t threshold) const {
+        const int end = i * stride + (j + 1) * nSamples;
+        Point3f acc(0, 0, 0);
+        int cnt = 0;
+        for (int k = i * stride + j * nSamples; k < end; ++k) {
+            if (samples[k].hits > threshold) {
+                acc += samples[k].color;
+                ++cnt;
+            }
+        }
+        if (cnt == 0) {
+            cnt = nSamples;
+            for (int k = i * stride + j * nSamples; k < end; ++k)
+                acc += samples[k].color;
+        }
+        acc.x /= cnt;
+        acc.y /= cnt;
+        acc.z /= cnt;
+        return acc;
     }
 };
 
@@ -330,9 +351,9 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     Mat localSVDValues(sz, CV_32F, 0.0f);
     //calcLocalSVDValues(localSVDValues, frame);
     //localSVDValues *= 2;
-    addChannel(frame, localSVDValues);
+    //addChannel(frame, localSVDValues);
 
-    CV_Assert(frame.channels() == 4);
+    CV_Assert(frame.channels() == 3);
 
     if (backgroundModel.empty()) {
         backgroundModel = makePtr<BackgroundModel>(sz, nSamples);
@@ -341,7 +362,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
         for (int i = 0; i < sz.height; ++i)
             for (int j = 0; j < sz.width; ++j) {
-                BackgroundSample sample(frame.at<Vec4f>(i, j));
+                BackgroundSample sample(frame.at<Point3f>(i, j));
                 for (int k = 0; k < nSamples; ++k)
                     (* backgroundModel)(i, j, k) = sample;
             }
@@ -355,7 +376,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     for (int i = 0; i < sz.height; ++i)
         for (int j = 0; j < sz.width; ++j) {
             int k;
-            const float minDist = backgroundModel->findClosest(i, j, frame.at<Vec4f>(i, j), k);
+            const float minDist = backgroundModel->findClosest(i, j, frame.at<Point3f>(i, j), k);
 
             distMovingAvg.at<float>(i, j) *= 1 - learningRate;
             distMovingAvg.at<float>(i, j) += learningRate * minDist;
@@ -371,12 +392,12 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
                 fgMask.at<uint8_t>(i, j) = 255;
 
                 if (rng.uniform(0.0f, 1.0f) < replaceRate)
-                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Vec4f>(i, j), currentTime));
+                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), currentTime));
             }
             else {
                 BackgroundSample& sample = (* backgroundModel)(k);
                 sample.color *= 1 - learningRate;
-                sample.color += learningRate * frame.at<Vec4f>(i, j);
+                sample.color += learningRate * frame.at<Point3f>(i, j);
                 sample.time = currentTime;
                 ++sample.hits;
 
@@ -401,11 +422,14 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
     this->postprocessing(fgMask);
 }
 
-void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundImage) const
-{
-    _backgroundImage.create(backgroundModel->getSize(), CV_8U);
+void BackgroundSubtractorLSBPImpl::getBackgroundImage(OutputArray _backgroundImage) const {
+    CV_Assert(!backgroundModel.empty());
+    const Size sz = backgroundModel->getSize();
+    _backgroundImage.create(sz, CV_8UC3);
     Mat backgroundImage = _backgroundImage.getMat();
-    backgroundImage = Scalar(0);
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j)
+            backgroundImage.at< Point3_<uint8_t> >(i, j) = backgroundModel->getMean(i, j, hitsThreshold) * 255;
 }
 
 Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
