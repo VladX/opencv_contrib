@@ -81,7 +81,7 @@ inline float localSVD(float a11, float a12, float a13, float a21, float a22, flo
     float phi;
 
     if (r <= -1)
-        phi = CV_PI / 3;
+        phi = float(CV_PI / 3);
     else if (r >= 1)
         phi = 0;
     else
@@ -375,8 +375,8 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
             int k;
             const float minDist = backgroundModel->findClosest(i, j, frame.at<Point3f>(i, j), k);
 
-            distMovingAvg.at<float>(i, j) *= 1 - learningRate;
-            distMovingAvg.at<float>(i, j) += learningRate * minDist;
+            distMovingAvg.at<float>(i, j) *= 1 - float(learningRate);
+            distMovingAvg.at<float>(i, j) += float(learningRate) * minDist;
 
             const float threshold = alpha * distMovingAvg.at<float>(i, j) + beta;
 
