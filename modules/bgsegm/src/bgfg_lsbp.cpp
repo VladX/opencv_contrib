@@ -50,6 +50,9 @@ namespace bgsegm
 namespace
 {
 
+const int LSBPthreshold = 12;
+const float LSBPtau = 0.1f;
+
 inline float L2sqdist(const Point3f& a) {
     return a.dot(a);
 }
@@ -103,42 +106,9 @@ inline float localSVD(float a11, float a12, float a13, float a21, float a22, flo
     return std::sqrt(e2 / e1) + std::sqrt(e3 / e1);
 }
 
-void calcLocalSVDValues(Mat& localSVDValues, const Mat& frame) {
-    Mat frameGray;
-    const Size sz = frame.size();
-
-    cvtColor(frame, frameGray, COLOR_BGR2GRAY);
-
-    for (int i = 1; i < sz.height - 1; ++i)
-        for (int j = 1; j < sz.width - 1; ++j) {
-            localSVDValues.at<float>(i, j) = localSVD(
-                frameGray.at<float>(i - 1, j - 1), frameGray.at<float>(i - 1, j), frameGray.at<float>(i - 1, j + 1),
-                frameGray.at<float>(i, j - 1), frameGray.at<float>(i, j), frameGray.at<float>(i, j + 1),
-                frameGray.at<float>(i + 1, j - 1), frameGray.at<float>(i + 1, j), frameGray.at<float>(i + 1, j + 1));
-        }
-
-    for (int i = 1; i < sz.height - 1; ++i) {
-        localSVDValues.at<float>(i, 0) = localSVD(
-            frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 1),
-            frameGray.at<float>(i, 0), frameGray.at<float>(i, 0), frameGray.at<float>(i, 1),
-            frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 1));
-
-        localSVDValues.at<float>(i, sz.width - 1) = localSVD(
-            frameGray.at<float>(i - 1, sz.width - 2), frameGray.at<float>(i - 1, sz.width - 1), frameGray.at<float>(i - 1, sz.width - 1),
-            frameGray.at<float>(i, sz.width - 2), frameGray.at<float>(i, sz.width - 1), frameGray.at<float>(i, sz.width - 1),
-            frameGray.at<float>(i + 1, sz.width - 2), frameGray.at<float>(i + 1, sz.width - 1), frameGray.at<float>(i + 1, sz.width - 1));
-    }
-
-    for (int j = 1; j < sz.width - 1; ++j) {
-        localSVDValues.at<float>(0, j) = localSVD(
-            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
-            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
-            frameGray.at<float>(1, j - 1), frameGray.at<float>(1, j), frameGray.at<float>(1, j + 1));
-        localSVDValues.at<float>(sz.height - 1, j) = localSVD(
-            frameGray.at<float>(sz.height - 2, j - 1), frameGray.at<float>(sz.height - 2, j), frameGray.at<float>(sz.height - 2, j + 1),
-            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1),
-            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1));
-    }
+inline void LSBPset(const Mat& localSVDValues, const Size& sz, uint32_t& descVal, float centerVal, int n, int i, int j) {
+    if (i >= 0 && j >= 0 && i < sz.height && j < sz.width && std::abs(localSVDValues.at<float>(i, j) - centerVal) > LSBPtau)
+        descVal |= uint32_t(1U) << n;
 }
 
 void removeNoise(Mat& fgMask, const Mat& compMask, const size_t threshold, const uint8_t filler) {
@@ -157,15 +127,14 @@ void removeNoise(Mat& fgMask, const Mat& compMask, const size_t threshold, const
                 fgMask.at<uint8_t>(i, j) = filler;
 }
 
-}
-
 class BackgroundSample {
 public:
     Point3f color;
+    uint32_t desc;
     uint64_t time;
     uint64_t hits;
 
-    BackgroundSample(Point3f c = Point3f(), uint64_t t = 0, uint64_t h = 0) : color(c), time(t), hits(h) {}
+    BackgroundSample(Point3f c = Point3f(), uint32_t d = 0, uint64_t t = 0, uint64_t h = 0) : color(c), desc(d), time(t), hits(h) {}
 };
 
 class BackgroundModel {
@@ -247,6 +216,91 @@ public:
     }
 };
 
+} // namespace
+
+void BackgroundSubtractorLSBPDesc::calcLocalSVDValues(OutputArray _localSVDValues, const Mat& frame) {
+    Mat frameGray;
+    const Size sz = frame.size();
+    _localSVDValues.create(sz, CV_32F);
+    Mat localSVDValues = _localSVDValues.getMat();
+    localSVDValues = 0.0f;
+
+    cvtColor(frame, frameGray, COLOR_BGR2GRAY);
+
+    for (int i = 1; i < sz.height - 1; ++i)
+        for (int j = 1; j < sz.width - 1; ++j) {
+            localSVDValues.at<float>(i, j) = localSVD(
+                frameGray.at<float>(i - 1, j - 1), frameGray.at<float>(i - 1, j), frameGray.at<float>(i - 1, j + 1),
+                frameGray.at<float>(i, j - 1), frameGray.at<float>(i, j), frameGray.at<float>(i, j + 1),
+                frameGray.at<float>(i + 1, j - 1), frameGray.at<float>(i + 1, j), frameGray.at<float>(i + 1, j + 1));
+        }
+
+    for (int i = 1; i < sz.height - 1; ++i) {
+        localSVDValues.at<float>(i, 0) = localSVD(
+            frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 0), frameGray.at<float>(i - 1, 1),
+            frameGray.at<float>(i, 0), frameGray.at<float>(i, 0), frameGray.at<float>(i, 1),
+            frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 0), frameGray.at<float>(i + 1, 1));
+
+        localSVDValues.at<float>(i, sz.width - 1) = localSVD(
+            frameGray.at<float>(i - 1, sz.width - 2), frameGray.at<float>(i - 1, sz.width - 1), frameGray.at<float>(i - 1, sz.width - 1),
+            frameGray.at<float>(i, sz.width - 2), frameGray.at<float>(i, sz.width - 1), frameGray.at<float>(i, sz.width - 1),
+            frameGray.at<float>(i + 1, sz.width - 2), frameGray.at<float>(i + 1, sz.width - 1), frameGray.at<float>(i + 1, sz.width - 1));
+    }
+
+    for (int j = 1; j < sz.width - 1; ++j) {
+        localSVDValues.at<float>(0, j) = localSVD(
+            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
+            frameGray.at<float>(0, j - 1), frameGray.at<float>(0, j), frameGray.at<float>(0, j + 1),
+            frameGray.at<float>(1, j - 1), frameGray.at<float>(1, j), frameGray.at<float>(1, j + 1));
+        localSVDValues.at<float>(sz.height - 1, j) = localSVD(
+            frameGray.at<float>(sz.height - 2, j - 1), frameGray.at<float>(sz.height - 2, j), frameGray.at<float>(sz.height - 2, j + 1),
+            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1),
+            frameGray.at<float>(sz.height - 1, j - 1), frameGray.at<float>(sz.height - 1, j), frameGray.at<float>(sz.height - 1, j + 1));
+    }
+}
+
+void BackgroundSubtractorLSBPDesc::computeFromLocalSVDValues(OutputArray _desc, const Mat& localSVDValues) {
+    const Size sz = localSVDValues.size();
+    _desc.create(sz, CV_32S);
+    Mat desc = _desc.getMat();
+
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j) {
+            uint32_t& descVal = desc.at<uint32_t>(i, j);
+            descVal = 0;
+            const float centerVal = localSVDValues.at<float>(i, j);
+            int n = 0;
+
+            for (int k = 1; k <= 4; ++k) {
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i - k, j);
+                ++n;
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i + k, j);
+                ++n;
+
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i, j - k);
+                ++n;
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i, j + k);
+                ++n;
+
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i - k, j - k);
+                ++n;
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i + k, j + k);
+                ++n;
+
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i - k, j + k);
+                ++n;
+                LSBPset(localSVDValues, sz, descVal, centerVal, n, i + k, j - k);
+                ++n;
+            }
+        }
+}
+
+void BackgroundSubtractorLSBPDesc::compute(OutputArray desc, const Mat& frame) {
+    Mat localSVDValues;
+    calcLocalSVDValues(localSVDValues, frame);
+    compute(desc, localSVDValues);
+}
+
 class BackgroundSubtractorLSBPImpl : public BackgroundSubtractorLSBP {
 private:
     Ptr<BackgroundModel> backgroundModel;
@@ -257,13 +311,14 @@ private:
     const uint64_t hitsThreshold;
     const float alpha;
     const float beta;
-    const float feedbackInc;
-    const float feedbackDec;
+    const float blinkingSupressionDecay;
+    const float blinkingSupressionMultiplier;
     const float noiseRemovalThresholdFacBG;
     const float noiseRemovalThresholdFacFG;
     const bool useDescriptors;
     Mat distMovingAvg;
-    Mat distThreshold;
+    Mat prevFgMask;
+    Mat blinkingSupression;
     RNG rng;
 
     void postprocessing(Mat& fgMask);
@@ -275,8 +330,8 @@ public:
                                  uint64_t hitsThreshold,
                                  float alpha,
                                  float beta,
-                                 float feedbackInc,
-                                 float feedbackDec,
+                                 float blinkingSupressionDecay,
+                                 float blinkingSupressionMultiplier,
                                  float noiseRemovalThresholdFacBG,
                                  float noiseRemovalThresholdFacFG,
                                  bool useDescriptors);
@@ -292,8 +347,8 @@ BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples,
                                                            uint64_t _hitsThreshold,
                                                            float _alpha,
                                                            float _beta,
-                                                           float _feedbackInc,
-                                                           float _feedbackDec,
+                                                           float _blinkingSupressionDecay,
+                                                           float _blinkingSupressionMultiplier,
                                                            float _noiseRemovalThresholdFacBG,
                                                            float _noiseRemovalThresholdFacFG,
                                                            bool _useDescriptors)
@@ -304,15 +359,15 @@ BackgroundSubtractorLSBPImpl::BackgroundSubtractorLSBPImpl(int _nSamples,
   hitsThreshold(_hitsThreshold),
   alpha(_alpha),
   beta(_beta),
-  feedbackInc(_feedbackInc),
-  feedbackDec(_feedbackDec),
+  blinkingSupressionDecay(_blinkingSupressionDecay),
+  blinkingSupressionMultiplier(_blinkingSupressionMultiplier),
   noiseRemovalThresholdFacBG(_noiseRemovalThresholdFacBG),
   noiseRemovalThresholdFacFG(_noiseRemovalThresholdFacFG),
   useDescriptors(_useDescriptors) {
     CV_Assert(nSamples > 1 && nSamples < 1024);
     CV_Assert(replaceRate >= 0 && replaceRate <= 1);
     CV_Assert(propagationRate >= 0 && propagationRate <= 1);
-    CV_Assert(feedbackInc > 0 && feedbackDec > 0);
+    CV_Assert(blinkingSupressionDecay > 0 && blinkingSupressionDecay < 1);
     CV_Assert(noiseRemovalThresholdFacBG >= 0 && noiseRemovalThresholdFacBG < 0.5);
     CV_Assert(noiseRemovalThresholdFacFG >= 0 && noiseRemovalThresholdFacFG < 0.5);
 }
@@ -345,21 +400,23 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
         frame /= 255;
     }
 
-    Mat localSVDValues(sz, CV_32F, 0.0f);
+    Mat LSBPDesc(sz, CV_32S);
+    LSBPDesc = 0;
 
     if (useDescriptors)
-        calcLocalSVDValues(localSVDValues, frame);
+        BackgroundSubtractorLSBPDesc::compute(LSBPDesc, frame);
 
     CV_Assert(frame.channels() == 3);
 
     if (backgroundModel.empty()) {
         backgroundModel = makePtr<BackgroundModel>(sz, nSamples);
         distMovingAvg = Mat(sz, CV_32F, 0.005f);
-        distThreshold = Mat(sz, CV_32F, 0.005f);
+        prevFgMask = Mat(sz, CV_8U);
+        blinkingSupression = Mat(sz, CV_32F, 0.0f);
 
         for (int i = 0; i < sz.height; ++i)
             for (int j = 0; j < sz.width; ++j) {
-                BackgroundSample sample(frame.at<Point3f>(i, j));
+                BackgroundSample sample(frame.at<Point3f>(i, j), LSBPDesc.at<uint32_t>(i, j));
                 for (int k = 0; k < nSamples; ++k)
                     (* backgroundModel)(i, j, k) = sample;
             }
@@ -379,20 +436,15 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
             distMovingAvg.at<float>(i, j) += float(learningRate) * minDist;
 
             const float threshold = alpha * distMovingAvg.at<float>(i, j) + beta;
+            BackgroundSample& sample = (* backgroundModel)(k);
 
-            if (distThreshold.at<float>(i, j) < threshold)
-                distThreshold.at<float>(i, j) += feedbackInc;
-            else
-                distThreshold.at<float>(i, j) -= feedbackDec;
-
-            if (minDist > distThreshold.at<float>(i, j)) {
+            if (__builtin_popcount(sample.desc ^ LSBPDesc.at<uint32_t>(i, j)) > LSBPthreshold || minDist > threshold) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
                 if (rng.uniform(0.0f, 1.0f) < replaceRate)
-                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), currentTime));
+                    backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), LSBPDesc.at<uint32_t>(i, j), currentTime));
             }
             else {
-                BackgroundSample& sample = (* backgroundModel)(k);
                 sample.color *= 1 - learningRate;
                 sample.color += learningRate * frame.at<Point3f>(i, j);
                 sample.time = currentTime;
@@ -416,6 +468,16 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
 
     ++currentTime;
 
+    cv::add(blinkingSupression, (fgMask != prevFgMask) / 255, blinkingSupression, cv::noArray(), CV_32F);
+    blinkingSupression *= blinkingSupressionDecay;
+    fgMask.copyTo(prevFgMask);
+    Mat prob = blinkingSupression * (blinkingSupressionMultiplier * (1 - blinkingSupressionDecay) / blinkingSupressionDecay);
+
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j)
+            if (rng.uniform(0.0f, 1.0f) < prob.at<float>(i, j))
+                backgroundModel->replaceOldest(i, j, BackgroundSample(frame.at<Point3f>(i, j), LSBPDesc.at<uint32_t>(i, j), currentTime));
+
     this->postprocessing(fgMask);
 }
 
@@ -435,8 +497,8 @@ Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
                                                              uint64_t hitsThreshold,
                                                              float alpha,
                                                              float beta,
-                                                             float feedbackInc,
-                                                             float feedbackDec,
+                                                             float blinkingSupressionDecay,
+                                                             float blinkingSupressionMultiplier,
                                                              float noiseRemovalThresholdFacBG,
                                                              float noiseRemovalThresholdFacFG,
                                                              bool useDescriptors) {
@@ -446,12 +508,12 @@ Ptr<BackgroundSubtractorLSBP> createBackgroundSubtractorLSBP(int nSamples,
                                                  hitsThreshold,
                                                  alpha,
                                                  beta,
-                                                 feedbackInc,
-                                                 feedbackDec,
+                                                 blinkingSupressionDecay,
+                                                 blinkingSupressionMultiplier,
                                                  noiseRemovalThresholdFacBG,
                                                  noiseRemovalThresholdFacFG,
                                                  useDescriptors);
 }
 
-}
-}
+} // namespace bgsegm
+} // namespace cv
