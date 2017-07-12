@@ -1,9 +1,14 @@
 #include "test_precomp.hpp"
+#include <set>
 
 using namespace std;
 using namespace cv;
 using namespace cvtest;
 using namespace cv::bgsegm;
+
+static string getDataDir() { return TS::ptr()->get_data_path(); }
+
+static string getLenaImagePath() { return getDataDir() + "shared/lena.png"; }
 
 // Simple synthetic illumination invariance test
 TEST(BackgroundSubtractor_LSBP, IlluminationInvariance)
@@ -42,4 +47,32 @@ TEST(BackgroundSubtractor_LSBP, Correctness)
     cv::bgsegm::BackgroundSubtractorLSBPDesc::calcLocalSVDValues(lsv, input);
 
     EXPECT_LE(std::abs(lsv.at<float>(1, 1) - 0.0f), 0.001f);
+}
+
+TEST(BackgroundSubtractor_LSBP, Discrimination)
+{
+    Mat lena = imread(getLenaImagePath());
+    Mat lsv;
+
+    lena.convertTo(lena, CV_32FC3);
+
+    cv::bgsegm::BackgroundSubtractorLSBPDesc::calcLocalSVDValues(lsv, lena);
+
+    Scalar mean, var;
+    meanStdDev(lsv, mean, var);
+
+    EXPECT_GE(mean[0], 0.02);
+    EXPECT_LE(mean[0], 0.04);
+    EXPECT_GE(var[0], 0.03);
+
+    Mat desc;
+    cv::bgsegm::BackgroundSubtractorLSBPDesc::computeFromLocalSVDValues(desc, lsv);
+    Size sz = desc.size();
+    std::set<uint32_t> distinctive_elements;
+
+    for (int i = 0; i < sz.height; ++i)
+        for (int j = 0; j < sz.width; ++j)
+            distinctive_elements.insert(desc.at<uint32_t>(i, j));
+
+    EXPECT_GE(distinctive_elements.size(), 50000U);
 }

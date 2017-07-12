@@ -51,7 +51,7 @@ namespace
 {
 
 const int LSBPthreshold = 12;
-const float LSBPtau = 0.1f;
+const float LSBPtau = 0.03f;
 
 inline float L2sqdist(const Point3f& a) {
     return a.dot(a);
