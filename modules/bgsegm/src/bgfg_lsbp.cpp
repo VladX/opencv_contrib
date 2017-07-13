@@ -53,6 +53,25 @@ namespace
 const int LSBPthreshold = 12;
 const float LSBPtau = 0.03f;
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#pragma intrinsic(__popcnt)
+#endif
+
+inline uint32_t LSBPDist32(uint32_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_popcount(n);
+#elif defined(_MSC_VER)
+    return __popcnt(n);
+#else
+    // Taken from http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+    n = n - ((n >> 1) & 0x55555555);
+    n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
+    return ((n + ((n >> 4) & 0xF0F0F0F)) * 0x1010101) >> 24;
+    // ---
+#endif
+}
+
 inline float L2sqdist(const Point3f& a) {
     return a.dot(a);
 }
@@ -438,7 +457,7 @@ void BackgroundSubtractorLSBPImpl::apply(InputArray _image, OutputArray _fgmask,
             const float threshold = alpha * distMovingAvg.at<float>(i, j) + beta;
             BackgroundSample& sample = (* backgroundModel)(k);
 
-            if (__builtin_popcount(sample.desc ^ LSBPDesc.at<uint32_t>(i, j)) > LSBPthreshold || minDist > threshold) {
+            if (LSBPDist32(sample.desc ^ LSBPDesc.at<uint32_t>(i, j)) > LSBPthreshold || minDist > threshold) {
                 fgMask.at<uint8_t>(i, j) = 255;
 
                 if (rng.uniform(0.0f, 1.0f) < replaceRate)
