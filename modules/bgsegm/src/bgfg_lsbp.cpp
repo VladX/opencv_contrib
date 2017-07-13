@@ -298,7 +298,7 @@ void BackgroundSubtractorLSBPDesc::computeFromLocalSVDValues(OutputArray _desc, 
 void BackgroundSubtractorLSBPDesc::compute(OutputArray desc, const Mat& frame) {
     Mat localSVDValues;
     calcLocalSVDValues(localSVDValues, frame);
-    compute(desc, localSVDValues);
+    computeFromLocalSVDValues(desc, localSVDValues);
 }
 
 class BackgroundSubtractorLSBPImpl : public BackgroundSubtractorLSBP {
