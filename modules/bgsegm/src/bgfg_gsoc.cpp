@@ -494,6 +494,8 @@ public:
 
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate = -1);
 
+    CV_WRAP virtual void apply_with_mask(InputArray image, InputArray exponetmask, OutputArray fgmask, double learningRate = -1);
+
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const;
 
     friend class ParallelGSOC;
@@ -552,14 +554,15 @@ private:
     const Size sz;
     BackgroundSubtractorGSOCImpl* bgs;
     const Mat& frame;
+    const Mat& emask;
     const double learningRate;
     Mat& fgMask;
 
     ParallelGSOC &operator=(const ParallelGSOC&);
 
 public:
-    ParallelGSOC(const Size& _sz, BackgroundSubtractorGSOCImpl* _bgs, const Mat& _frame, double _learningRate, Mat& _fgMask)
-    : sz(_sz), bgs(_bgs), frame(_frame), learningRate(_learningRate), fgMask(_fgMask) {};
+    ParallelGSOC(const Size& _sz, BackgroundSubtractorGSOCImpl* _bgs, const Mat& _frame, const Mat& _emask, double _learningRate, Mat& _fgMask)
+    : sz(_sz), bgs(_bgs), frame(_frame), emask(_emask), learningRate(_learningRate), fgMask(_fgMask) {};
 
     void operator()(const Range &range) const {
         BackgroundModelGSOC* backgroundModel = bgs->backgroundModel.get();
@@ -579,7 +582,7 @@ public:
             if (minDist > threshold) {
                 fgMask.at<uchar>(i, j) = 255;
 
-                if (bgs->rng.uniform(0.0f, 1.0f) < bgs->replaceRate)
+                if (emask.at<uchar>(i, j) == 0 && bgs->rng.uniform(0.0f, 1.0f) < bgs->replaceRate)
                     backgroundModel->replaceOldest(i, j, BackgroundSampleGSOC(frame.at<Point3f>(i, j), 0, bgs->currentTime));
             }
             else {
@@ -706,15 +709,21 @@ void BackgroundSubtractorGSOCImpl::postprocessing(Mat& fgMask) {
     fgMask = fgMask > 127;
 }
 
-void BackgroundSubtractorGSOCImpl::apply(InputArray _image, OutputArray _fgmask, double learningRate) {
+void BackgroundSubtractorGSOCImpl::apply(InputArray, OutputArray, double) {
+    CV_Assert(0);
+}
+
+void BackgroundSubtractorGSOCImpl::apply_with_mask(InputArray _image, InputArray _exponetmask, OutputArray _fgmask, double learningRate) {
     const Size sz = _image.size();
     _fgmask.create(sz, CV_8U);
     Mat fgMask = _fgmask.getMat();
 
     Mat frame = _image.getMat();
+    Mat emask = _exponetmask.getMat();
 
     CV_Assert(frame.depth() == CV_8U || frame.depth() == CV_32F);
     CV_Assert(frame.channels() == 1 || frame.channels() == 3);
+    CV_Assert(sz == _exponetmask.size() && emask.channels() == 1 && emask.depth() == CV_8U);
 
     if (frame.channels() != 3)
         cvtColor(frame, frame, COLOR_GRAY2BGR);
@@ -775,7 +784,7 @@ void BackgroundSubtractorGSOCImpl::apply(InputArray _image, OutputArray _fgmask,
     if (learningRate > 1 || learningRate < 0)
         learningRate = 0.1;
 
-    parallel_for_(Range(0, sz.area()), ParallelGSOC(sz, this, frame, learningRate, fgMask));
+    parallel_for_(Range(0, sz.area()), ParallelGSOC(sz, this, frame, emask, learningRate, fgMask));
 
     ++currentTime;
 

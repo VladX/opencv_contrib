@@ -257,6 +257,8 @@ public:
     // BackgroundSubtractor interface
     CV_WRAP virtual void apply(InputArray image, OutputArray fgmask, double learningRate=-1) = 0;
 
+    CV_WRAP virtual void apply_with_mask(InputArray image, InputArray exponetmask, OutputArray fgmask, double learningRate=-1) = 0;
+
     CV_WRAP virtual void getBackgroundImage(OutputArray backgroundImage) const = 0;
 };
 
