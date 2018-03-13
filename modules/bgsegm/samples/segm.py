@@ -28,7 +28,7 @@ bgs = cv2.bgsegm.createBackgroundSubtractorGSOC(propagationRate=0.1)
 while True:
     ret, frame = cap.read()
     emask = forward(frame)
-    emask = np.uint8(emask * 255)
+    emask = np.uint8((emask > 0.5) * 255)
     mask = bgs.apply_with_mask(frame, emask)
     bg = bgs.getBackgroundImage()
     cv2.imshow('frame', frame)
